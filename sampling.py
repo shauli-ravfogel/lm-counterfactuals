@@ -50,26 +50,28 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 
     tokens = tokenizer(sentence, return_tensors="pt")
-    tokens = tokens.input_ids[0]
-
-    # use the algorithm from https://timvieira.github.io/blog/post/2020/06/30/generating-truncated-random-variates/ 
-    # to generate truncated random variates 
-
+    tokens = tokens.input_ids
+    logits = model(tokens).logits.detach().cpu().numpy()
+    print(logits.shape)
     all_gumbel_noise = []
 
+    tokens = tokens[0]
     for i,w in enumerate(tokens):
         value = np.random.gumbel(loc=0.0, scale=1.0)
-        truncated_gumbel = TruncatedDistribution(gumbel_l, a=value, b=1000)
-        samples = truncated_gumbel.rvs(size=vocab_size)
-        gumbel_noise = samples
-        gumbel_noise[w] = value
-
+        logit_w = logits[0][i][w]
+        gumbel_noise = []
+        for j in tqdm.tqdm(range(vocab_size)):
+            logit_j = logits[0][i][j]
+            truncated_gumbel = TruncatedDistribution(gumbel_l, a=-100, b= value + logit_w - logit_j)
+            sample = truncated_gumbel.rvs(size=1)
+            gumbel_noise.append(sample.item())
+        gumbel_noise[w] = value        
         all_gumbel_noise.append(gumbel_noise)  
     
     all_gumbel_noise  = np.array(all_gumbel_noise)
     processor = GumbelProcessor(precomputed_noise=torch.tensor(all_gumbel_noise))
 
-    return sample_gumbel(model, tokenizer, processor, "")
+    return sample_gumbel(model, tokenizer, processor, "The")
 
 if __name__ == "__main__":
   
