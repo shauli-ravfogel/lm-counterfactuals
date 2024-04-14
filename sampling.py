@@ -1,5 +1,29 @@
 from transformers.generation import LogitsProcessor,LogitsProcessorList
 import numpy as np
+from scipy.stats import gumbel_l
+from arsenal.maths.rvs import TruncatedDistribution
+
+class NoiseLogger(object):
+
+    def __init__(self, eos):
+        self.eos = eos
+        self.noise = []
+
+    def __call__(self, noise: torch.FloatTensor):
+        self.noise.append(noise)
+
+    def __len__(self):
+        return len(self.noise)
+
+    def __getitem__(self, item):
+        return self.noise[item]
+
+    def get_noise(self):
+        return self.noise
+
+    def zero_out(self):
+        self.noise = []
+
 
 class GumbelProcessor(LogitsProcessor):
     def __init__(self, precomputed_noise=None):
@@ -19,6 +43,8 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
                                    do_sample=False)
     return tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
 
+
+
 def counterfactual_generation(model, tokenizer, gumbel_processor, sentence, vocab_size):
 
     tokens = tokenizer(sentence, return_tensors="pt")
@@ -28,15 +54,21 @@ def counterfactual_generation(model, tokenizer, gumbel_processor, sentence, voca
     # to generate truncated random variates 
 
     all_gumbel_noise = []
+
     for i,w in enumerate(tokens[0]):
         gumbel_noise = np.zeros(vocab_size)
         gumbel_noise[w] = np.random.gumbel(loc=0.0, scale=1.0)
-
+        truncated_gumbel = TruncatedDistribution(gumbel_l, a=gumbel_noise[w], b=1000)
+        samples = truncated_gumbel.rvs(size=vocab_size)
         # fill all over tokens with indepndent samples from the truncated gumbel distribution
-        # let wn be the specific w from above, then fo each other w!=wn,
-        # we samples U(w) for each token w from the truncated density p(U(w)|U(wn) + pi(wn) >= U(wn) + pi(wn))
+        gumbel_noise[gumbel_noise != w] = samples
 
-        raise NotImplementedError("This is not implemented yet")
+        all_gumbel_noise.append(gumbel_noise)  
+    
+    all_gumbel_noise  = np.array(all_gumbel_noise)
+    processor = GumbelProcessor(precomputed_noise=torch.tensor(all_gumbel_noise))
+
+    return sample_gumbel(model, tokenizer, processor, "")
 
 if __name__ == "__main__":
   
