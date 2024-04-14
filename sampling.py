@@ -56,7 +56,7 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
     all_gumbel_noise = []
 
     tokens = tokens[0]
-    for i,w in enumerate(tokens):
+    for i,w in enumerate(tokens[1:]):
         value = np.random.gumbel(loc=0.0, scale=1.0)
         logit_w = logits[0][i][w]
         gumbel_noise = []
