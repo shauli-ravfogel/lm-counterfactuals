@@ -47,23 +47,22 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 
 
 
-def counterfactual_generation(model, tokenizer, gumbel_processor, sentence, vocab_size):
+def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 
     tokens = tokenizer(sentence, return_tensors="pt")
-    tokens = tokens.input_ids
+    tokens = tokens.input_ids[0]
 
     # use the algorithm from https://timvieira.github.io/blog/post/2020/06/30/generating-truncated-random-variates/ 
     # to generate truncated random variates 
 
     all_gumbel_noise = []
 
-    for i,w in enumerate(tokens[0]):
-        gumbel_noise = np.zeros(vocab_size)
-        gumbel_noise[w] = np.random.gumbel(loc=0.0, scale=1.0)
-        truncated_gumbel = TruncatedDistribution(gumbel_l, a=gumbel_noise[w], b=1000)
+    for i,w in enumerate(tokens):
+        value = np.random.gumbel(loc=0.0, scale=1.0)
+        truncated_gumbel = TruncatedDistribution(gumbel_l, a=value, b=1000)
         samples = truncated_gumbel.rvs(size=vocab_size)
-        # fill all over tokens with indepndent samples from the truncated gumbel distribution
-        gumbel_noise[gumbel_noise != w] = samples
+        gumbel_noise = samples
+        gumbel_noise[w] = value
 
         all_gumbel_noise.append(gumbel_noise)  
     
