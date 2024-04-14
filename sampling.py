@@ -28,11 +28,13 @@ class NoiseLogger(object):
 class GumbelProcessor(LogitsProcessor):
     def __init__(self, precomputed_noise=None):
         self.precomputed_noise = precomputed_noise
+        self.i=0
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
         if self.precomputed_noise is not None:
-            return scores + self.precomputed_noise
+            return scores + self.precomputed_noise[self.i]
         gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
+        self.i+=1
         return scores + gumbel
 
 
