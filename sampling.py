@@ -31,10 +31,11 @@ class GumbelProcessor(LogitsProcessor):
         self.i=0
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
-        if self.precomputed_noise is not None:
-            return scores + self.precomputed_noise[self.i]
-        gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
         self.i+=1
+        if self.precomputed_noise is not None:
+            return scores + self.precomputed_noise[self.i-1]
+            
+        gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
         return scores + gumbel
 
 
@@ -66,6 +67,13 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
             gumbel_noise.append(sample.item())
         gumbel_noise[w] = value        
         all_gumbel_noise.append(gumbel_noise)  
+
+    # add a bias to the EOS token to make it more likely at the end
+    
+    eos = tokenizer.eos_token_id
+    noise = np.zeros(vocab_size)
+    noise[eos] = 500.0
+    all_gumbel_noise.append(noise)
     
     all_gumbel_noise  = np.array(all_gumbel_noise)
     processor = GumbelProcessor(precomputed_noise=torch.tensor(all_gumbel_noise))
