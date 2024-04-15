@@ -52,7 +52,6 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
     tokens = tokenizer(sentence, return_tensors="pt")
     tokens = tokens.input_ids
     logits = model(tokens).logits.detach().cpu().numpy()
-    print(logits.shape)
     all_gumbel_noise = []
 
     tokens = tokens[0]
@@ -62,7 +61,7 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
         gumbel_noise = []
         for j in tqdm.tqdm(range(vocab_size)):
             logit_j = logits[0][i][j]
-            truncated_gumbel = TruncatedDistribution(gumbel_l, a=-100, b= value + logit_w - logit_j)
+            truncated_gumbel = TruncatedDistribution(gumbel_r, a=-100, b= value + logit_w - logit_j)
             sample = truncated_gumbel.rvs(size=1)
             gumbel_noise.append(sample.item())
         gumbel_noise[w] = value        
