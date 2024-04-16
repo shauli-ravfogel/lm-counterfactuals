@@ -39,14 +39,10 @@ class GumbelProcessor(LogitsProcessor):
         return scores + gumbel
 
 
-def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
-
-    inputs = tokenizer(prompt, return_tensors="pt")
-    generate_ids = model.generate(inputs.input_ids, max_length=64, logits_processor=[gumbel_processor],
-                                   do_sample=False)
-    return tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
-
-
+def sample_from_truncated_gumbel(cdf_a,b,gumbel):
+    cdf_b = gumbel.cdf(b)
+    u = np.random.uniform(0, 1)
+    return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))
 
 def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 
@@ -54,18 +50,19 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
     tokens = tokens.input_ids
     logits = model(tokens).logits.detach().cpu().numpy()
     all_gumbel_noise = []
-
-    tokens = tokens[0]
-    for i,w in enumerate(tokens[1:]):
+    cdf_a = gumbel_r.cdf(-500.0)
+    for i,w in enumerate(tokens[0][1:]):
         value = np.random.gumbel(loc=0.0, scale=1.0)
         logit_w = logits[0][i][w]
         gumbel_noise = []
         for j in tqdm.tqdm(range(vocab_size)):
             logit_j = logits[0][i][j]
-            truncated_gumbel = TruncatedDistribution(gumbel_r, a=-100, b= value + logit_w - logit_j)
-            sample = truncated_gumbel.rvs(size=1)
-            gumbel_noise.append(sample.item())
-        gumbel_noise[w] = value        
+            #truncated_gumbel = TruncatedDistribution(gumbel_r, a=-300, b= value + logit_w - logit_j)
+            #sample = truncated_gumbel.rvs(size=1)
+            sample = sample_from_truncated_gumbel(cdf_a, value + logit_w - logit_j, gumbel_r)
+            gumbel_noise.append(sample)
+            #gumbel_noise.append(1)
+        gumbel_noise[w.detach().cpu().numpy().item()] = value        
         all_gumbel_noise.append(gumbel_noise)  
 
     # add a bias to the EOS token to make it more likely at the end
