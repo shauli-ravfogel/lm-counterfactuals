@@ -2,6 +2,7 @@ from transformers.generation import LogitsProcessor,LogitsProcessorList
 import numpy as np
 from scipy.stats import gumbel_l
 from arsenal.maths.rvs import TruncatedDistribution
+import copy
 
 class NoiseLogger(object):
 
@@ -24,7 +25,49 @@ class NoiseLogger(object):
     def zero_out(self):
         self.noise = []
 
+def switch_tokens(model, tokenizer, replaced_pairs, swap_only_input=False, swap_only_output=False):
+    ###
+    # model: the model to be edited
+    # tokenizer: the tokenizer used to tokenize the text
+    # replaced_pairs: a list of tuples of strings, each tuple contains two strings that are to be swapped
+    # swap_only_input: if True, only the input embeddings are swapped
+    # swap_only_output: if True, only the output embeddings are swapped
+    # Note: the implemention assumes the input and output embeddings are tied in the original model
+    # returns: the edited model
 
+    # assert tied emebdidngs
+
+    assert id(model.transformer.wte.weight) == id(model.lm_head.weight)
+
+    # sawp pairs of tokens
+
+    for pair in replaced_pairs:
+        token_id_0 = tokenizer(pair[0])["input_ids"][0]
+        token_id_1 = tokenizer(pair[1])["input_ids"][0]
+        embedding_pair_0 = model.transformer.wte.weight.data[token_id_0].clone()
+        embedding_pair_1 = model.transformer.wte.weight.data[token_id_1].clone()
+
+        if swap_only_input or swap_only_output:
+            # untie the input and output embeddings
+            embedding_mat = copy.deepcopy(model.transformer.wte.weight)
+            model.lm_head.weight = embedding_mat
+            # assert the objects are not the same anymore
+            assert id(model.transformer.wte.weight) != id(model.lm_head.weight)
+
+            if swap_only_output:
+                model.lm_head.weight.data[token_id_0, :] = embedding_pair_1
+                model.lm_head.weight.data[token_id_1, :] = embedding_pair_0
+                continue
+
+            elif swap_only_input:
+                model.transformer.wte.weight.data[token_id_0, :] = embedding_pair_1
+                model.transformer.wte.weight.data[token_id_1, :] = embedding_pair_0
+                continue
+        else: # swap both input and output embeddings
+            model.transformer.wte.weight.data[token_id_0,:], model.transformer.wte.weight.data[token_id_1,:] = embedding_pair_1, embedding_pair_0
+    
+    return model
+    
 class GumbelProcessor(LogitsProcessor):
     def __init__(self, precomputed_noise=None):
         self.precomputed_noise = precomputed_noise
