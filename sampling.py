@@ -1,10 +1,17 @@
 from transformers.generation import LogitsProcessor,LogitsProcessorList
+from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 from scipy.stats import gumbel_l
 from arsenal.maths.rvs import TruncatedDistribution
 import copy
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import tqdm
+import scipy
+from scipy.stats import gumbel_l, gumbel_r
+from arsenal.maths.rvs import TruncatedDistribution
+import transformers
+from evaluate import load
+
 
 class NoiseLogger(object):
 
@@ -66,22 +73,34 @@ def switch_tokens(model, tokenizer, replaced_pairs, swap_only_input=False, swap_
                 model.transformer.wte.weight.data[token_id_1, :] = embedding_pair_0
                 continue
         else: # swap both input and output embeddings
-            model.transformer.wte.weight.data[token_id_0,:], model.transformer.wte.weight.data[token_id_1,:] = embedding_pair_1, embedding_pair_0
-    
+            #model.transformer.wte.weight.data[token_id_0,:], model.transformer.wte.weight.data[token_id_1,:] = embedding_pair_1, embedding_pair_0
+            model.lm_head.weight.data[token_id_0, :] = embedding_pair_1
+            model.lm_head.weight.data[token_id_1, :] = embedding_pair_0
     return model
+
+
     
 class GumbelProcessor(LogitsProcessor):
-    def __init__(self, precomputed_noise=None):
+    def __init__(self, precomputed_noise=None,noise=1):
         self.precomputed_noise = precomputed_noise
         self.i=0
+        # set np random seed
+
+        np.random.seed(noise)
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
         self.i+=1
         if self.precomputed_noise is not None:
             return scores + self.precomputed_noise[self.i-1]
-            
+        
         gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
         return scores + gumbel
+
+
+def sample_from_truncated_gumbel(cdf_a,b,gumbel):
+    cdf_b = gumbel.cdf(b)
+    u = np.random.uniform(0, 1)
+    return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))
 
 def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 
@@ -89,11 +108,6 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
     generate_ids = model.generate(inputs.input_ids, max_length=64, logits_processor=[gumbel_processor],
                                    do_sample=False)
     return tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
-
-def sample_from_truncated_gumbel(cdf_a,b,gumbel):
-    cdf_b = gumbel.cdf(b)
-    u = np.random.uniform(0, 1)
-    return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))
 
 def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 
@@ -128,10 +142,67 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 
     return sample_gumbel(model, tokenizer, processor, "The")
 
+
+def get_perp(model, tokenized_prompt):
+
+  with torch.no_grad():
+        outputs = model(tokenized_prompt)
+        logits = outputs.logits
+        loss = torch.nn.functional.cross_entropy(logits.view(-1, logits.size(-1)), tokenized_prompt.view(-1), reduction="none")
+    
+  perp = torch.exp(loss)
+  return loss
+
 if __name__ == "__main__":
-  
-  model = AutoModelForCausalLM.from_pretrained("allenai/OLMo-1B")
-  tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-1B", trust_remote_code=True)
+  #model_name = "google/gemma-2b-it"
+  model_name = "openai-community/gpt2-large"
+
+  model = AutoModelForCausalLM.from_pretrained(model_name)
+  tokenizer = AutoTokenizer.from_pretrained(model_name)
   model.eval()
   processor = GumbelProcessor()
-  sample_gumbel(model, tokenizer, processor, "one day,")
+  sample = sample_gumbel(model, tokenizer, processor, "one rainy day, I saw him")
+  print("=============================")
+  print("Single sample:", sample[0])
+  print("=============================")
+
+  # create an edited model
+
+  edited_model = copy.deepcopy(model)
+  edited_model = switch_tokens(edited_model, tokenizer, [("her", "him"), (" her", " him"), ("she", "he"), (" she", " he")])
+
+  # sample from the edited model
+  generation_pipeline = transformers.pipeline("text-generation", model=edited_model, tokenizer=tokenizer, device=0)
+  # generate
+  print("Sample from edited model:", generation_pipeline("I thought I identified John, and when I saw", max_length=100, num_return_sequences=1, do_sample=False, truncation=True)[0]["generated_text"])
+  print("=============================")
+
+  # counterfactual generation
+  print("Generating counterfactual pair of continuations")
+  gumbel_processor = GumbelProcessor(noise=0)
+  prompt = "I saw him"
+  tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
+  prompt_tokens = [tokenizer.decode(t) for t in tokenized_prompt[0]]
+  print(prompt_tokens)
+  print(sample_gumbel(model.cpu(), tokenizer, gumbel_processor, prompt))
+  gumbel_processor = GumbelProcessor(noise=0)
+  prompt = "I saw her"
+  tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
+  prompt_tokens = [tokenizer.decode(t) for t in tokenized_prompt[0]]
+  print(sample_gumbel(edited_model.cpu(), tokenizer, gumbel_processor, prompt))
+  print(prompt_tokens)
+
+  # Likelihood test
+
+  print("=============================")
+  print("Likelihood test")
+  prompt = "she approached me, and I saw her"
+  tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
+  perp = get_perp(model, tokenized_prompt)
+  print("perplexity of the original model on `{}`".format(prompt), perp)
+  
+  prompt = "he approached me, and I saw him"
+  tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
+  perp = get_perp(edited_model, tokenized_prompt)
+  print("perplexity of edited model on `{}`".format(prompt), perp)
+
