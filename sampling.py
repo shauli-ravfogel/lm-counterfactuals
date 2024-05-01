@@ -3,6 +3,8 @@ import numpy as np
 from scipy.stats import gumbel_l
 from arsenal.maths.rvs import TruncatedDistribution
 import copy
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 class NoiseLogger(object):
 
@@ -123,7 +125,7 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 if __name__ == "__main__":
   
   model = AutoModelForCausalLM.from_pretrained("allenai/OLMo-1B")
-  tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-1B")
+  tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-1B", trust_remote_code=True)
   model.eval()
   processor = GumbelProcessor()
   sample_gumbel(model, tokenizer, processor, "one day,")
