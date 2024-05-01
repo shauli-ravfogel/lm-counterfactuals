@@ -83,6 +83,12 @@ class GumbelProcessor(LogitsProcessor):
         gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
         return scores + gumbel
 
+def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
+
+    inputs = tokenizer(prompt, return_tensors="pt")
+    generate_ids = model.generate(inputs.input_ids, max_length=64, logits_processor=[gumbel_processor],
+                                   do_sample=False)
+    return tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
 
 def sample_from_truncated_gumbel(cdf_a,b,gumbel):
     cdf_b = gumbel.cdf(b)
