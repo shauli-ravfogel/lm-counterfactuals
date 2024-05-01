@@ -34,22 +34,31 @@ class NoiseLogger(object):
     def zero_out(self):
         self.noise = []
 
+def switch_gumbel_noise(noise, replaced_pairs, tokenizer):
+
+    noise_new = copy.deepcopy(noise)
+    for pair in replaced_pairs:
+        for i in range(len(noise)):
+            token_id_0 = tokenizer(pair[0])["input_ids"][0]
+            token_id_1 = tokenizer(pair[1])["input_ids"][0]
+            noise_new[i][0][token_id_0], noise_new[i][0][token_id_1] = noise[i][0][token_id_1], noise[i][0][token_id_0]
+    return noise_new
+
+
 def switch_tokens(model, tokenizer, replaced_pairs, swap_only_input=False, swap_only_output=False):
     ###
-    # model: the model to be edited
+    # model: the model to be edited 
     # tokenizer: the tokenizer used to tokenize the text
     # replaced_pairs: a list of tuples of strings, each tuple contains two strings that are to be swapped
     # swap_only_input: if True, only the input embeddings are swapped
     # swap_only_output: if True, only the output embeddings are swapped
-    # Note: the implemention assumes the input and output embeddings are tied in the original model
+    # Note: the implementation assumes the input and output embeddings are tied in the original model
     # returns: the edited model
 
-    # assert tied emebdidngs
-
+    # assert tied embeddings
     assert id(model.transformer.wte.weight) == id(model.lm_head.weight)
 
-    # sawp pairs of tokens
-
+    # swap pairs of tokens
     for pair in replaced_pairs:
         token_id_0 = tokenizer(pair[0])["input_ids"][0]
         token_id_1 = tokenizer(pair[1])["input_ids"][0]
@@ -59,41 +68,44 @@ def switch_tokens(model, tokenizer, replaced_pairs, swap_only_input=False, swap_
         if swap_only_input or swap_only_output:
             # untie the input and output embeddings
             embedding_mat = copy.deepcopy(model.transformer.wte.weight)
-            model.lm_head.weight = embedding_mat
+            model.lm_head.weight = embedding_mat.clone()
             # assert the objects are not the same anymore
             assert id(model.transformer.wte.weight) != id(model.lm_head.weight)
 
             if swap_only_output:
-                model.lm_head.weight.data[token_id_0, :] = embedding_pair_1
-                model.lm_head.weight.data[token_id_1, :] = embedding_pair_0
+                model.lm_head.weight.data[token_id_0, :] = embedding_pair_1.clone()
+                model.lm_head.weight.data[token_id_1, :] = embedding_pair_0.clone()
                 continue
 
             elif swap_only_input:
-                model.transformer.wte.weight.data[token_id_0, :] = embedding_pair_1
-                model.transformer.wte.weight.data[token_id_1, :] = embedding_pair_0
+                model.transformer.wte.weight.data[token_id_0, :] = embedding_pair_1.clone()
+                model.transformer.wte.weight.data[token_id_1, :] = embedding_pair_0.clone()
                 continue
-        else: # swap both input and output embeddings
-            #model.transformer.wte.weight.data[token_id_0,:], model.transformer.wte.weight.data[token_id_1,:] = embedding_pair_1, embedding_pair_0
-            model.lm_head.weight.data[token_id_0, :] = embedding_pair_1
-            model.lm_head.weight.data[token_id_1, :] = embedding_pair_0
+        else:  # swap both input and output embeddings
+            model.transformer.wte.weight.data[token_id_0, :], model.transformer.wte.weight.data[token_id_1, :] = embedding_pair_1.clone(), embedding_pair_0.clone()
+            model.lm_head.weight.data[token_id_0, :], model.lm_head.weight.data[token_id_1, :] = embedding_pair_1.clone(), embedding_pair_0.clone()
+
     return model
 
 
     
 class GumbelProcessor(LogitsProcessor):
-    def __init__(self, precomputed_noise=None,noise=1):
+    def __init__(self, precomputed_noise=None,noise=1, replaced_pairs=None):
         self.precomputed_noise = precomputed_noise
         self.i=0
+        self.replaced_pairs=replaced_pairs
         # set np random seed
 
         np.random.seed(noise)
+        self.noises = []
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
-        self.i+=1
+        self.i += 1
         if self.precomputed_noise is not None:
-            return scores + self.precomputed_noise[self.i-1]
+            return scores + self.precomputed_noise[self.i - 1]
         
         gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
+        self.noises.append(gumbel)
         return scores + gumbel
 
 
@@ -106,8 +118,12 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 
     inputs = tokenizer(prompt, return_tensors="pt")
     generate_ids = model.generate(inputs.input_ids, max_length=64, logits_processor=[gumbel_processor],
-                                   do_sample=False)
+                                   do_sample=False, num_return_sequences=1, pad_token_id=tokenizer.eos_token_id,)
     return tokenizer.batch_decode(generate_ids, skip_special_tokens=True)
+
+
+def unconditional_counterfactual_generation(model, tokenizer, vocab_size):
+    all_gumbel_noise = []
 
 def counterfactual_generation(model, tokenizer, sentence, vocab_size):
 
@@ -156,6 +172,7 @@ def get_perp(model, tokenized_prompt):
 if __name__ == "__main__":
   #model_name = "google/gemma-2b-it"
   model_name = "openai-community/gpt2-large"
+  swapped_pairs = [("her", "him"), (" her", " him"), ("she", "he"), (" she", " he")]         
 
   model = AutoModelForCausalLM.from_pretrained(model_name)
   tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -169,7 +186,8 @@ if __name__ == "__main__":
   # create an edited model
 
   edited_model = copy.deepcopy(model)
-  edited_model = switch_tokens(edited_model, tokenizer, [("her", "him"), (" her", " him"), ("she", "he"), (" she", " he")])
+  edited_model = switch_tokens(edited_model, tokenizer, swapped_pairs)
+
 
   # sample from the edited model
   generation_pipeline = transformers.pipeline("text-generation", model=edited_model, tokenizer=tokenizer, device=0)
@@ -179,18 +197,27 @@ if __name__ == "__main__":
 
   # counterfactual generation
   print("Generating counterfactual pair of continuations")
-  gumbel_processor = GumbelProcessor(noise=0)
+  gumbel_processor = GumbelProcessor(noise=2)
   prompt = "I saw him"
   tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
   prompt_tokens = [tokenizer.decode(t) for t in tokenized_prompt[0]]
   print(prompt_tokens)
   print(sample_gumbel(model.cpu(), tokenizer, gumbel_processor, prompt))
-  gumbel_processor = GumbelProcessor(noise=0)
+
+  noises_first = gumbel_processor.noises
+  noises_first = switch_gumbel_noise(noises_first, swapped_pairs, tokenizer)
+  gumbel_processor = GumbelProcessor(noise=2, precomputed_noise=noises_first)
   prompt = "I saw her"
   tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
   prompt_tokens = [tokenizer.decode(t) for t in tokenized_prompt[0]]
   print(sample_gumbel(edited_model.cpu(), tokenizer, gumbel_processor, prompt))
   print(prompt_tokens)
+
+  noises_second = gumbel_processor.noises
+  
+  assert np.allclose(noises_first, noises_second)
+
+  # generate a pair of unconditional counterfactuals
 
   # Likelihood test
 
@@ -203,6 +230,6 @@ if __name__ == "__main__":
   
   prompt = "he approached me, and I saw him"
   tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
-  perp = get_perp(edited_model, tokenized_prompt)
+  perp = get_perp(edited_model.cpu(), tokenized_prompt)
   print("perplexity of edited model on `{}`".format(prompt), perp)
 
