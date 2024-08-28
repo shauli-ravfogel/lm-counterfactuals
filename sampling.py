@@ -125,7 +125,7 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 def unconditional_counterfactual_generation(model, tokenizer, vocab_size):
     all_gumbel_noise = []
 
-def counterfactual_generation(model, tokenizer, sentence, vocab_size):
+def counterfactual_generation(model, tokenizer, sentence, vocab_size,prompt=None):
 
     tokens = tokenizer(sentence, return_tensors="pt")
     tokens = tokens.input_ids
@@ -155,8 +155,9 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size):
     
     all_gumbel_noise  = np.array(all_gumbel_noise)
     processor = GumbelProcessor(precomputed_noise=torch.tensor(all_gumbel_noise))
-
-    return sample_gumbel(model, tokenizer, processor, "The")
+    first_word = sentence.split(" ")[0]
+    prompt = first_word if prompt is None else prompt
+    return sample_gumbel(model, tokenizer, processor, prompt)
 
 
 def get_perp(model, tokenized_prompt):
@@ -232,4 +233,3 @@ if __name__ == "__main__":
   tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
   perp = get_perp(edited_model.cpu(), tokenized_prompt)
   print("perplexity of edited model on `{}`".format(prompt), perp)
-
