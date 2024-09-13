@@ -2,13 +2,13 @@ from transformers.generation import LogitsProcessor,LogitsProcessorList
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import numpy as np
 from scipy.stats import gumbel_l
-from arsenal.maths.rvs import TruncatedDistribution
+#from arsenal.maths.rvs import TruncatedDistribution
 import copy
 import torch
 import tqdm
 import scipy
 from scipy.stats import gumbel_l, gumbel_r
-from arsenal.maths.rvs import TruncatedDistribution
+#from arsenal.maths.rvs import TruncatedDistribution
 import transformers
 from evaluate import load
 
@@ -33,6 +33,7 @@ class NoiseLogger(object):
 
     def zero_out(self):
         self.noise = []
+
 
 def switch_gumbel_noise(noise, replaced_pairs, tokenizer):
 
@@ -109,10 +110,6 @@ class GumbelProcessor(LogitsProcessor):
         return scores + gumbel
 
 
-def sample_from_truncated_gumbel(cdf_a,b,gumbel):
-    cdf_b = gumbel.cdf(b)
-    u = np.random.uniform(0, 1)
-    return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))
 
 def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 
@@ -125,13 +122,13 @@ def sample_gumbel(model, tokenizer, gumbel_processor, prompt):
 def unconditional_counterfactual_generation(model, tokenizer, vocab_size):
     all_gumbel_noise = []
 
-def counterfactual_generation(model, tokenizer, sentence, vocab_size,prompt=None):
+def counterfactual_generation_partial(model, tokenizer, sentence, vocab_size,prompt=None):
 
     tokens = tokenizer(sentence, return_tensors="pt")
     tokens = tokens.input_ids
     logits = model(tokens).logits.detach().cpu().numpy()
     all_gumbel_noise = []
-    cdf_a = gumbel_r.cdf(-500.0)
+    cdf_a = gumbel_l.cdf(-500.0)
     for i,w in enumerate(tokens[0][1:]):
         value = np.random.gumbel(loc=0.0, scale=1.0)
         logit_w = logits[0][i][w]
@@ -140,9 +137,40 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size,prompt=None
             logit_j = logits[0][i][j]
             #truncated_gumbel = TruncatedDistribution(gumbel_r, a=-300, b= value + logit_w - logit_j)
             #sample = truncated_gumbel.rvs(size=1)
-            sample = sample_from_truncated_gumbel(cdf_a, value + logit_w - logit_j, gumbel_r)
+            sample = sample_from_truncated_gumbel(cdf_a, value + logit_w - logit_j, gumbel_l, j)
             gumbel_noise.append(sample)
             #gumbel_noise.append(1)
+        gumbel_noise[w.detach().cpu().numpy().item()] = value        
+        all_gumbel_noise.append(gumbel_noise)  
+    
+    return all_gumbel_noise
+
+def counterfactual_generation(model, tokenizer, sentence, vocab_size,prompt=None):
+
+    tokens = tokenizer(tokenizer.bos_token + sentence, return_tensors="pt")
+    tokens = tokens.input_ids
+    logits = model(tokens).logits.detach().cpu().numpy()
+    all_gumbel_noise = []
+    cdf_a = gumbel_l.cdf(-500.0)
+    all_logit_diffs = []
+    
+    for i,w in enumerate(tokens[0][1:]):
+        np.random.seed(i)
+        value = np.random.gumbel(loc=0.0, scale=1.0)
+        logit_w = logits[0][i][w]
+        gumbel_noise = [] 
+        logit_diffs = []
+        
+        for j in tqdm.tqdm(range(vocab_size)):
+            logit_j = logits[0][i][j]
+            #truncated_gumbel = TruncatedDistribution(gumbel_r, a=-300, b= value + logit_w - logit_j)
+            #sample = truncated_gumbel.rvs(size=1)
+            np.random.seed(0)
+            sample = sample_from_truncated_gumbel(cdf_a, value + logit_w - logit_j, gumbel_l)
+            logit_diffs.append(logit_w - logit_j)
+            gumbel_noise.append(sample)
+            #gumbel_noise.append(1)
+        all_logit_diffs.append(logit_diffs)
         gumbel_noise[w.detach().cpu().numpy().item()] = value        
         all_gumbel_noise.append(gumbel_noise)  
 
@@ -156,8 +184,65 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size,prompt=None
     all_gumbel_noise  = np.array(all_gumbel_noise)
     processor = GumbelProcessor(precomputed_noise=torch.tensor(all_gumbel_noise))
     first_word = sentence.split(" ")[0]
-    prompt = first_word if prompt is None else prompt
-    return sample_gumbel(model, tokenizer, processor, prompt)
+    prompt = tokenizer.bos_token if prompt is None else tokenizer.bos_token+prompt
+    return sample_gumbel(model, tokenizer, processor, prompt), all_logit_diffs, all_gumbel_noise, processor
+
+
+def sample_from_truncated_gumbel(cdf_a,b,gumbel,seed=None):
+    cdf_b = gumbel.cdf(b)
+    np.random.seed(0) if seed is None else np.random.seed(seed)
+    u = np.random.uniform(0, 1)
+    return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))
+
+
+def sample_from_truncated_gumbel_vectorized(cdf_a, b_array, gumbel):
+    cdf_b = gumbel.cdf(b_array)  # Compute CDF for an array of b values
+    u = []
+    for i in range(b_array.shape[0]):
+        np.random.seed(i)
+        u.append(np.random.uniform(0, 1))
+
+    #u = np.random.uniform(0, 1, size=b_array.shape)  # Generate uniform random values of the same shape as b_array
+    return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))  # Apply the inverse CDF to each element in the array
+
+
+def counterfactual_generation_batched(model, tokenizer, sentence, vocab_size, prompt=None):
+    tokens = tokenizer(tokenizer.bos_token+sentence, return_tensors="pt").input_ids
+    logits = model(tokens).logits.detach().cpu().numpy()
+    all_gumbel_noise = []
+
+    cdf_a = gumbel_l.cdf(-500.0)
+    all_logit_diffs = []
+    for i, w in enumerate(tokens[0][1:]):
+        # Generate Gumbel noise for each token in the vocabulary
+        np.random.seed(i)
+        value = np.random.gumbel(loc=0.0, scale=1.0)
+        # Calculate the logits differences
+        logit_diffs =  logits[0][i][w] - logits[0][i] 
+        all_logit_diffs.append(logit_diffs)
+        # Apply vectorized truncated Gumbel sampling to the entire vocabulary
+        truncated_gumbels = sample_from_truncated_gumbel_vectorized(cdf_a, value + logit_diffs, gumbel_l)
+
+        # Ensure the original token keeps its specific noise
+        truncated_gumbels[w.detach().cpu().numpy().item()] = value 
+        
+        all_gumbel_noise.append(truncated_gumbels)
+
+    # Add a bias to the EOS token to make it more likely at the end
+    eos = tokenizer.eos_token_id
+    noise = np.zeros(vocab_size)
+    noise[eos] = 500.0
+    all_gumbel_noise.append(noise)
+
+    all_gumbel_noise = np.array(all_gumbel_noise)
+
+    # Convert Gumbel noise to a tensor
+    processor = GumbelProcessor(precomputed_noise=torch.tensor(all_gumbel_noise))
+
+    first_word = sentence.split(" ")[0]
+    prompt = tokenizer.bos_token if prompt is None else prompt
+    return sample_gumbel(model, tokenizer, processor, tokenizer.bos_token+prompt), all_logit_diffs, all_gumbel_noise, processor
+
 
 
 def get_perp(model, tokenized_prompt):
