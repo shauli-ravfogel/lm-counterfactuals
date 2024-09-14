@@ -191,7 +191,7 @@ def counterfactual_generation(model, tokenizer, sentence, vocab_size,prompt=None
         for j in range(len(gumbel_noise)):
             if j != w_ind:
                 assert logits[0][i][j] + gumbel_noise[j] < logit_w + value
-        print(w, "all good")
+        #print(w, "all good")
         all_gumbel_noise.append(gumbel_noise)  
 
     # add a bias to the EOS token to make it more likely at the end
@@ -252,21 +252,23 @@ def sample_from_truncated_gumbel(cdf_a,b,gumbel,seed=None):
         cdf_a, cdf_b = cdf_b, cdf_a
     return gumbel.ppf(cdf_a + u * (cdf_b - cdf_a))
     
-def sample_from_truncated_gumbel_vectorized(cdf_a, b):
-    cdf_a = np.zeros_like(b)
+def sample_from_truncated_gumbel_vectorized(a, b):
+    b_copy = b.copy()
+    a_copy = a.copy()
+    b = np.where(b > a, b, a_copy)
+    a = np.where(b_copy > a, a, b_copy)
+    cdf_a = gumbel_l.cdf(a)
+    cdf_b = gumbel_l.cdf(b)
     #return np.array([sample_from_truncated_gumbel(cdf_a[i], b[i], gumbel_l) for i in range(len(b))])
     
     # Calculate the CDF for b and scale u accordingly for truncation
-    cdf_b = gumbel_l.cdf(b)  # This is the scalar or array CDF for b
+    
     u=[]
     for i in range(b.shape[0]):
         #np.random.seed(i)
         u.append(np.random.uniform(0, 1))
     u = np.array(u)
 
-    cdf_a_copy = np.zeros_like(b)
-    cdf_b = np.where(cdf_b > 0., cdf_b, -cdf_b)
-            
     # Ensure the operation is element-wise (u * (cdf_b - cdf_a))
     cdf_u = cdf_a + u * (cdf_b - cdf_a)  # Element-wise operation between scalars or arrays
     
@@ -282,7 +284,7 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
     logits = model(tokens).logits.detach().cpu().numpy()
 
     # Pre-calculate the CDF and Gumbel noise for all tokens
-    cdf_a = gumbel_l.cdf(np.ones(1)*(-500.0))
+    as_vec = np.ones(1)*(-25.0)
     all_logit_diffs = []
     all_gumbel_noise = []
 
@@ -300,7 +302,7 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
         value = np.random.gumbel(loc=0.0, scale=1.0)
 
         # Calculate the sample from truncated gumbel for all vocabulary items
-        gumbel_noise = sample_from_truncated_gumbel_vectorized(cdf_a, value + logit_diffs)
+        gumbel_noise = sample_from_truncated_gumbel_vectorized(as_vec, value + logit_diffs)
         # cdf_b = gumbel_l.cdf(value + logit_diffs)
         # cdf_a = np.zeros_like(cdf_b)
         # u = np.random.rand(cdf_b.shape[0])
@@ -308,7 +310,11 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
         print(w)
         # Replace the noise for the actual token with its own Gumbel value
         gumbel_noise[w.detach().cpu().numpy().item()] = value
-
+        w_ind = w.detach().cpu().numpy().item()
+        for j in range(len(gumbel_noise)):
+            if j != w_ind:
+                assert logits[0][i][j] + gumbel_noise[j] < logit_w + value
+        print("value:", value, "logit w:", logit_w, "logi diffs:", logit_diffs[:3], "noise:", gumbel_noise[:3], "min logit diff:", np.min(logit_diffs))
         all_gumbel_noise.append(gumbel_noise)
         all_logit_diffs.append(logit_diffs)
 
