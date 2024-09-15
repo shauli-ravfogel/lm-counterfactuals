@@ -100,7 +100,7 @@ class GumbelProcessor(LogitsProcessor):
         self.noises = []
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
-        
+        #print(input_ids)
         if self.precomputed_noise is not None:
             out = scores + self.precomputed_noise[self.i]
             self.i += 1
@@ -272,17 +272,26 @@ def sample_from_truncated_gumbel_vectorized(a, b):
     # Ensure the operation is element-wise (u * (cdf_b - cdf_a))
     cdf_u = cdf_a + u * (cdf_b - cdf_a)  # Element-wise operation between scalars or arrays
     
-    # Ensure the CDF is bounded between 0 and 1 (floating-point precision issues might cause problems)
-    cdf_u = np.clip(cdf_u, 0, 1)
-    
     # Apply inverse CDF (ppf) to the result, element-wise
     return gumbel_l.ppf(cdf_u)
 
 
 def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size, prompt=None):
     tokens = tokenizer(tokenizer.bos_token + sentence, return_tensors="pt").input_ids
-    logits = model(tokens).logits.detach().cpu().numpy()
+    print([tokenizer.decode(tok) for tok in tokens[0]])
+    #logits = model(tokens).logits.detach().cpu().numpy()
 
+    past_key_values = None  # for caching the past key/values
+    logits = []
+    for i in range(tokens.shape[1]):
+        with torch.no_grad():
+            outputs = model(tokens[:, :i+1], past_key_values=past_key_values, use_cache=False)
+        
+        logits_i = outputs.logits[:, -1, :]
+        logits.append(logits_i.squeeze())
+        past_key_values = outputs.past_key_values
+    logits = np.array(logits)  
+    
     # Pre-calculate the CDF and Gumbel noise for all tokens
     as_vec = np.ones(1)*(-25.0)
     all_logit_diffs = []
@@ -294,27 +303,21 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
 
     for i, w in enumerate(tokens[0][1:]):
         # Get logits for current word and all vocab
-        logit_w = logits[0][i, w]
-        logit_diffs = logit_w - logits[0][i]  # Corrected: logit_w - logit_j for all vocab
+        logit_w = logits[i, w]
+        logit_diffs = logit_w - logits[i]  # Corrected: logit_w - logit_j for all vocab
 
         # Generate gumbel noise for the current word
-        #np.random.seed(i)
         value = np.random.gumbel(loc=0.0, scale=1.0)
 
         # Calculate the sample from truncated gumbel for all vocabulary items
         gumbel_noise = sample_from_truncated_gumbel_vectorized(as_vec, value + logit_diffs)
-        # cdf_b = gumbel_l.cdf(value + logit_diffs)
-        # cdf_a = np.zeros_like(cdf_b)
-        # u = np.random.rand(cdf_b.shape[0])
-        # gumbel_noise = gumbel_l.ppf(cdf_a + u * (cdf_b - cdf_a))
-        print(w)
-        # Replace the noise for the actual token with its own Gumbel value
         gumbel_noise[w.detach().cpu().numpy().item()] = value
         w_ind = w.detach().cpu().numpy().item()
         for j in range(len(gumbel_noise)):
             if j != w_ind:
-                assert logits[0][i][j] + gumbel_noise[j] < logit_w + value
-        print("value:", value, "logit w:", logit_w, "logi diffs:", logit_diffs[:3], "noise:", gumbel_noise[:3], "min logit diff:", np.min(logit_diffs))
+                assert logits[i][j] + gumbel_noise[j] < logit_w + value
+        ind_min_diff = np.argmin(logit_diffs)
+        #print("value:", value, "logit w:", logit_w, "logi diffs:", logit_diffs[:3], "noise:", gumbel_noise[:3], "min logit diff:", np.min(logit_diffs), "ind min:", ind_min_diff, "noise for ind min:", gumbel_noise[ind_min_diff])
         all_gumbel_noise.append(gumbel_noise)
         all_logit_diffs.append(logit_diffs)
 
@@ -332,7 +335,7 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
 
     first_word = sentence.split(" ")[0]
     prompt = tokenizer.bos_token if prompt is None else prompt
-    return sample_gumbel(model, tokenizer, processor, tokenizer.bos_token)#, all_logit_diffs, all_gumbel_noise, processor
+    return all_gumbel_noise 
 
 
 def get_perp(model, tokenized_prompt):
@@ -408,3 +411,35 @@ if __name__ == "__main__":
   tokenized_prompt = tokenizer(prompt, return_tensors="pt")["input_ids"]
   perp = get_perp(edited_model.cpu(), tokenized_prompt)
   print("perplexity of edited model on `{}`".format(prompt), perp)
+
+
+  import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_token=None):
+
+    # Encode the input text into input_ids
+    input_ids = tokenizer.encode(input_text, return_tensors="pt")
+    # Initialize variables
+    generated_ids = input_ids
+    past_key_values = None  # for caching the past key/values
+    
+    for _ in range(max_new_tokens):
+        with torch.no_grad():
+            outputs = model(generated_ids[:, -1:], past_key_values=past_key_values, use_cache=True)
+        
+        logits = outputs.logits[:, -1, :]
+        
+        past_key_values = outputs.past_key_values
+        next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
+        generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
+        generated_token = tokenizer.decode(next_token_id, skip_special_tokens=True)
+        
+        # Stop if EOS token or custom stop_token is generated
+        if stop_token and generated_token == stop_token:
+            break
+        if next_token_id.item() == tokenizer.eos_token_id:
+            break
+    
+    final_sentence = tokenizer.decode(generated_ids[0], skip_special_tokens=True)    
+    return final_sentence
