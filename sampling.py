@@ -45,6 +45,40 @@ def switch_gumbel_noise(noise, replaced_pairs, tokenizer):
     return noise_new
 
 
+def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_token=None, noise=None):
+    
+    input_ids = tokenizer.encode(input_text, return_tensors="pt", add_special_tokens=False)
+    #print([tokenizer.decode(tok) for tok in input_ids])
+    # Initialize variables
+    generated_ids = input_ids
+    past_key_values = None  # for caching the past key/values
+    
+    for i in range(max_new_tokens):
+        with torch.no_grad():
+            outputs = model(generated_ids[:, :], past_key_values=past_key_values, use_cache=False)
+        
+        logits = outputs.logits[:, -1, :]
+        #print("argmaxed token:", tokenizer.decode(logits.argmax()))
+        if noise is not None:
+            logits += noise[i]
+        #print("argmaxed token after noise:", tokenizer.decode(logits.argmax()))
+        past_key_values = outputs.past_key_values
+        next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
+        generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
+        next_token_id_scalar = next_token_id.item()
+        
+        generated_token = tokenizer.decode([next_token_id_scalar], skip_special_tokens=True)
+        
+        if stop_token and generated_token == stop_token:
+            break
+        if next_token_id_scalar == tokenizer.eos_token_id:
+            break
+    
+    # Decode the full generated sequence
+    final_sentence = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+    
+    return final_sentence
+    
 def switch_tokens(model, tokenizer, replaced_pairs, swap_only_input=False, swap_only_output=False):
     ###
     # model: the model to be edited 
@@ -277,8 +311,8 @@ def sample_from_truncated_gumbel_vectorized(a, b):
 
 
 def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size, prompt=None):
-    tokens = tokenizer(tokenizer.bos_token + sentence, return_tensors="pt").input_ids
-    print([tokenizer.decode(tok) for tok in tokens[0]])
+    tokens = tokenizer(tokenizer.bos_token + sentence, return_tensors="pt", add_special_tokens=False).input_ids
+    #print([tokenizer.decode(tok) for tok in tokens[0]])
     #logits = model(tokens).logits.detach().cpu().numpy()
 
     past_key_values = None  # for caching the past key/values
@@ -315,9 +349,10 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
         w_ind = w.detach().cpu().numpy().item()
         for j in range(len(gumbel_noise)):
             if j != w_ind:
-                assert logits[i][j] + gumbel_noise[j] < logit_w + value
+                #assert logits[i][j] + gumbel_noise[j] < logit_w + value
+                continue
         ind_min_diff = np.argmin(logit_diffs)
-        #print("value:", value, "logit w:", logit_w, "logi diffs:", logit_diffs[:3], "noise:", gumbel_noise[:3], "min logit diff:", np.min(logit_diffs), "ind min:", ind_min_diff, "noise for ind min:", gumbel_noise[ind_min_diff])
+        #print("value:", value, "logit w:", logit_w, "logi diffs:", logit_diffs[:3], "noise:", gumbel_noise[:3], "min logit diff:", np.min(logit_diffs), "ind min:", ind_min_diff, "noise for ind min:", gumbel_noise[ind_min_diff], "w min diff:", tokenizer.decode(ind_min_diff))
         all_gumbel_noise.append(gumbel_noise)
         all_logit_diffs.append(logit_diffs)
 
@@ -415,31 +450,3 @@ if __name__ == "__main__":
 
   import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-
-def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_token=None):
-
-    # Encode the input text into input_ids
-    input_ids = tokenizer.encode(input_text, return_tensors="pt")
-    # Initialize variables
-    generated_ids = input_ids
-    past_key_values = None  # for caching the past key/values
-    
-    for _ in range(max_new_tokens):
-        with torch.no_grad():
-            outputs = model(generated_ids[:, -1:], past_key_values=past_key_values, use_cache=True)
-        
-        logits = outputs.logits[:, -1, :]
-        
-        past_key_values = outputs.past_key_values
-        next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
-        generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
-        generated_token = tokenizer.decode(next_token_id, skip_special_tokens=True)
-        
-        # Stop if EOS token or custom stop_token is generated
-        if stop_token and generated_token == stop_token:
-            break
-        if next_token_id.item() == tokenizer.eos_token_id:
-            break
-    
-    final_sentence = tokenizer.decode(generated_ids[0], skip_special_tokens=True)    
-    return final_sentence
