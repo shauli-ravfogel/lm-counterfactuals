@@ -1,5 +1,5 @@
 from transformers.generation import LogitsProcessor,LogitsProcessorList
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, LlamaForCausalLM, AutoTokenizer
 import numpy as np
 #from arsenal.maths.rvs import TruncatedDistribution
 import copy
@@ -10,7 +10,7 @@ from scipy.stats import gumbel_l, gumbel_r
 #from arsenal.maths.rvs import TruncatedDistribution
 import transformers
 from evaluate import load
-
+from pyreft.reft_model import ReftModel
 
 class NoiseLogger(object):
 
@@ -45,9 +45,11 @@ def switch_gumbel_noise(noise, replaced_pairs, tokenizer):
     return noise_new
 
 
-def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_token=None, noise=None):
-    
-    input_ids = tokenizer.encode(input_text, return_tensors="pt", add_special_tokens=False)
+def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_token=None, noise=None, first_idx=None):
+    device = model.model.device if isinstance(model, ReftModel) else model.device
+    if first_idx is None:
+        first_idx = 0
+    input_ids = tokenizer.encode(input_text, return_tensors="pt", add_special_tokens=False).to(device)
     #print([tokenizer.decode(tok) for tok in input_ids])
     # Initialize variables
     generated_ids = input_ids
@@ -55,12 +57,22 @@ def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_t
     
     for i in range(max_new_tokens):
         with torch.no_grad():
-            outputs = model(generated_ids[:, :], past_key_values=past_key_values, use_cache=False)
+            #outputs = model(generated_ids[:, :], past_key_values=past_key_values, use_cache=False)
+            if not isinstance(model, ReftModel):
+                outputs = model(generated_ids[:, :], use_cache=True)
+            else:
+                  #tok_out = tokenizer(input_text, return_tensors="pt", add_special_tokens=False).to(device)
+                  #tok_out["past_key_values"] = past_key_values
+                  #tok_out["input_ids"] = generated_ids
+                  _, outputs = model({"input_ids": generated_ids})
         
         logits = outputs.logits[:, -1, :]
         #print("argmaxed token:", tokenizer.decode(logits.argmax()))
         if noise is not None:
-            logits += noise[i]
+            if first_idx+i < len(noise):
+                logits += torch.tensor(noise[first_idx+i]).to(device)
+        else:
+                logits += torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size = logits.shape[-1])).to(device)
         #print("argmaxed token after noise:", tokenizer.decode(logits.argmax()))
         past_key_values = outputs.past_key_values
         next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
@@ -68,6 +80,7 @@ def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_t
         next_token_id_scalar = next_token_id.item()
         
         generated_token = tokenizer.decode([next_token_id_scalar], skip_special_tokens=True)
+        #print(generated_token)
         
         if stop_token and generated_token == stop_token:
             break
@@ -311,7 +324,7 @@ def sample_from_truncated_gumbel_vectorized(a, b):
 
 
 def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size, prompt=None):
-    tokens = tokenizer(tokenizer.bos_token + sentence, return_tensors="pt", add_special_tokens=False).input_ids
+    tokens = tokenizer(sentence, return_tensors="pt", add_special_tokens=False).input_ids.to(model.device)
     #print([tokenizer.decode(tok) for tok in tokens[0]])
     #logits = model(tokens).logits.detach().cpu().numpy()
 
@@ -321,7 +334,7 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
         with torch.no_grad():
             outputs = model(tokens[:, :i+1], past_key_values=past_key_values, use_cache=False)
         
-        logits_i = outputs.logits[:, -1, :]
+        logits_i = outputs.logits[:, -1, :].detach().cpu().numpy()
         logits.append(logits_i.squeeze())
         past_key_values = outputs.past_key_values
     logits = np.array(logits)  
@@ -351,16 +364,15 @@ def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size,
             if j != w_ind:
                 #assert logits[i][j] + gumbel_noise[j] < logit_w + value
                 continue
-        ind_min_diff = np.argmin(logit_diffs)
         #print("value:", value, "logit w:", logit_w, "logi diffs:", logit_diffs[:3], "noise:", gumbel_noise[:3], "min logit diff:", np.min(logit_diffs), "ind min:", ind_min_diff, "noise for ind min:", gumbel_noise[ind_min_diff], "w min diff:", tokenizer.decode(ind_min_diff))
         all_gumbel_noise.append(gumbel_noise)
         all_logit_diffs.append(logit_diffs)
 
     # Add EOS token bias
-    eos = tokenizer.eos_token_id
-    noise = np.zeros(vocab_size)
-    noise[eos] = 500.0
-    all_gumbel_noise.append(noise)
+    #eos = tokenizer.eos_token_id
+    #noise = np.zeros(vocab_size)
+    #noise[eos] = 500.0
+    #all_gumbel_noise.append(noise)
 
     # Convert results to NumPy arrays
     all_gumbel_noise = np.array(all_gumbel_noise)
