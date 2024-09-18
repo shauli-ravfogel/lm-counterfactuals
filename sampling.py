@@ -51,7 +51,10 @@ def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token
         first_idx = 0
     input_ids = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False).to(device)
     with torch.no_grad():
-        outputs = model(input_ids[:,:-1], use_cache=True)
+        if not isinstance(model, ReftModel):
+            outputs = model(input_ids[:,:-1], use_cache=True)
+        else:
+            _,outputs = model({"input_ids": input_ids[:,:-1]}, use_cache=True)
         past_key_values = outputs.past_key_values
         last_prompt_token = input_ids[0,-1]
         generated_token = last_prompt_token
@@ -65,10 +68,7 @@ def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token
             if not isinstance(model, ReftModel):
                 outputs = model(torch.tensor(generated_token).unsqueeze(0).unsqueeze(0).to(device), use_cache=True, past_key_values = past_key_values)
             else:
-                  #tok_out = tokenizer(input_text, return_tensors="pt", add_special_tokens=False).to(device)
-                  #tok_out["past_key_values"] = past_key_values
-                  #tok_out["input_ids"] = generated_ids
-                  _, outputs = model({"input_ids": generated_ids})
+                  _, outputs = model({"input_ids": torch.tensor(generated_token).unsqueeze(0).unsqueeze(0).to(device), "past_key_values": past_key_values}, use_cache=True)
         
         logits = outputs.logits[:, -1, :]
         print("decoded argmax", tokenizer.decode(logits.argmax()))
