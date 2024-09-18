@@ -45,21 +45,25 @@ def switch_gumbel_noise(noise, replaced_pairs, tokenizer):
     return noise_new
 
 
-def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_token=None, noise=None, first_idx=None):
+def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token=None, noise=None, first_idx=None):
     device = model.model.device if isinstance(model, ReftModel) else model.device
     if first_idx is None:
         first_idx = 0
-    input_ids = tokenizer.encode(input_text, return_tensors="pt", add_special_tokens=False).to(device)
-    #print([tokenizer.decode(tok) for tok in input_ids])
+    input_ids = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False).to(device)
+    with torch.no_grad():
+        outputs = model(input_ids[:,:-1], use_cache=True)
+        past_key_values = outputs.past_key_values
+        last_prompt_token = input_ids[0,-1]
+        generated_token = last_prompt_token
+
     # Initialize variables
     generated_ids = input_ids
-    past_key_values = None  # for caching the past key/values
     cont = []    
+
     for i in range(max_new_tokens):
         with torch.no_grad():
-            #outputs = model(generated_ids[:, :], past_key_values=past_key_values, use_cache=False)
             if not isinstance(model, ReftModel):
-                outputs = model(generated_ids[:, :], use_cache=False, past_key_values =past_key_values )
+                outputs = model(torch.tensor(generated_token).unsqueeze(0).unsqueeze(0).to(device), use_cache=True, past_key_values = past_key_values)
             else:
                   #tok_out = tokenizer(input_text, return_tensors="pt", add_special_tokens=False).to(device)
                   #tok_out["past_key_values"] = past_key_values
@@ -67,32 +71,76 @@ def generate_with_logits(model, tokenizer, input_text, max_new_tokens=50, stop_t
                   _, outputs = model({"input_ids": generated_ids})
         
         logits = outputs.logits[:, -1, :]
-        #print("argmaxed token:", tokenizer.decode(logits.argmax()))
-        if noise is not None:
-            if first_idx+i < len(noise):
-                logits += torch.tensor(noise[first_idx+i]).to(device)
-            else:
-                #print("adding random noise")
+        print("decoded argmax", tokenizer.decode(logits.argmax()))
+        if (noise is not None) and ( i < len(noise)):
+                print("adding noise of shape", noise[i].shape)
+                logits += torch.tensor(noise[i]).to(device)
+        else:
                 logits += torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size = logits.shape[-1])).to(device)
-        #print("argmaxed token after noise:", tokenizer.decode(logits.argmax()))
+        
         past_key_values = outputs.past_key_values
         next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
         generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
-        next_token_id_scalar = next_token_id.item()
+        generated_token = next_token_id.item()
         
-        generated_token = tokenizer.decode([next_token_id_scalar], skip_special_tokens=True)
-        cont.append(generated_token)
-        #print(generated_token)
+        generated_token_str = tokenizer.decode([generated_token], skip_special_tokens=True)
+        print("Generated ", generated_token_str)
+        cont.append(generated_token_str)
         
         if stop_token and generated_token == stop_token:
             break
-        if next_token_id_scalar == tokenizer.eos_token_id:
+        if generated_token == tokenizer.eos_token_id:
             break
     
     # Decode the full generated sequence
     final_sentence = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
     cont = tokenizer.decode(generated_ids[0][first_idx:], skip_special_tokens=True)
-    return final_sentence, cont
+    return final_sentence, cont    
+    
+    # # Initialize variables
+    # generated_ids = input_ids
+    # past_key_values = None  # for caching the past key/values
+    # cont = []    
+    # for i in range(max_new_tokens):
+    #     with torch.no_grad():
+    #         #outputs = model(generated_ids[:, :], past_key_values=past_key_values, use_cache=False)
+    #         if not isinstance(model, ReftModel):
+    #             outputs = model(generated_ids[:, :], use_cache=False, past_key_values =past_key_values )
+    #         else:
+    #               #tok_out = tokenizer(input_text, return_tensors="pt", add_special_tokens=False).to(device)
+    #               #tok_out["past_key_values"] = past_key_values
+    #               #tok_out["input_ids"] = generated_ids
+    #               _, outputs = model({"input_ids": generated_ids})
+        
+    #     logits = outputs.logits[:, -1, :]
+    #     #print("argmaxed token:", tokenizer.decode(logits.argmax()))
+    #     if noise is not None:
+    #         if first_idx+i < len(noise):
+    #             logits += torch.tensor(noise[first_idx+i]).to(device)
+    #         else:
+    #             #print("adding random noise")
+    #             logits += torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size = logits.shape[-1])).to(device)
+    #     else:
+    #             logits += torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size = logits.shape[-1])).to(device)
+    #     #print("argmaxed token after noise:", tokenizer.decode(logits.argmax()))
+    #     past_key_values = outputs.past_key_values
+    #     next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
+    #     generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
+    #     next_token_id_scalar = next_token_id.item()
+        
+    #     generated_token = tokenizer.decode([next_token_id_scalar], skip_special_tokens=True)
+    #     cont.append(generated_token)
+    #     #print(generated_token)
+        
+    #     if stop_token and generated_token == stop_token:
+    #         break
+    #     if next_token_id_scalar == tokenizer.eos_token_id:
+    #         break
+    
+    # # Decode the full generated sequence
+    # final_sentence = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+    # cont = tokenizer.decode(generated_ids[0][first_idx:], skip_special_tokens=True)
+    # return final_sentence, cont
     
 def switch_tokens(model, tokenizer, replaced_pairs, swap_only_input=False, swap_only_output=False):
     ###
@@ -325,21 +373,54 @@ def sample_from_truncated_gumbel_vectorized(a, b):
     return gumbel_l.ppf(cdf_u)
 
 
-def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size, prompt=None):
+def counterfactual_generation_vectorized2(model, tokenizer, prompt, sentence, vocab_size):
+    tokens = tokenizer.encode(prompt + sentence, return_tensors="pt", add_special_tokens=False).to(model.device)
+    tokens_prompt = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
+    len_prompt = len(tokens_prompt[0])
+
+    with torch.no_grad():
+        logits_all = model(tokens, use_cache=False).logits
+        logits_cont = logits_all[:,len_prompt-1:,:][0].detach().cpu().numpy()
+    tokens_cont = tokens[:,len_prompt-1:]
+    as_vec = np.ones(1)*(-25.0)
+    uniform_samples = np.random.uniform(0, 1, size=(len(tokens[0]) - 1, vocab_size))
+    ind2noise = {}
+    all_gumbel_noise = []
+    
+    for i, w in enumerate(tokens_cont[0,1:]):
+        logit_w = logits_cont[i, w]
+        logit_diffs = logit_w - logits_cont[i]  # Corrected: logit_w - logit_j for all vocab
+
+        # Generate gumbel noise for the current word
+        value = np.random.gumbel(loc=0.0, scale=1.0)
+
+        # Calculate the sample from truncated gumbel for all vocabulary items
+        gumbel_noise = sample_from_truncated_gumbel_vectorized(as_vec, value + logit_diffs)
+        gumbel_noise[w.detach().cpu().numpy().item()] = value
+        w_ind = w.detach().cpu().numpy().item()
+
+        all_gumbel_noise.append(gumbel_noise)
+        ind2noise[i] = (tokenizer.decode(w), gumbel_noise)
+    
+    all_gumbel_noise = np.array(all_gumbel_noise)
+    return all_gumbel_noise, ind2noise
+
+
+    
+def counterfactual_generation_vectorized(model, tokenizer, sentence, vocab_size):
     tokens = tokenizer.encode(sentence, return_tensors="pt", add_special_tokens=False).to(model.device)
     #print([tokenizer.decode(tok) for tok in tokens[0]])
-    #logits = model(tokens).logits.detach().cpu().numpy()
+    #logits = model(tokens).logits.detach().cpu().squeeze().numpy()
 
-    past_key_values = None  # for caching the past key/values
-    logits = []
-    for i in range(tokens.shape[1]):
-        with torch.no_grad():
-            outputs = model(tokens[:, :i+1], past_key_values=past_key_values, use_cache=False)
-        
-        logits_i = outputs.logits[:, -1, :].detach().cpu().numpy()
-        logits.append(logits_i.squeeze())
-        past_key_values = outputs.past_key_values
-    logits = np.array(logits)  
+    # past_key_values = None  # for caching the past key/values
+    # logits = []
+    # for i in range(tokens.shape[1]):
+    #    with torch.no_grad():
+    #        outputs = model(tokens[:, :i+1], past_key_values=past_key_values, use_cache=False)
+    #    logits_i = outputs.logits[:, -1, :].detach().cpu().numpy()
+    #    logits.append(logits_i.squeeze())
+    #    past_key_values = outputs.past_key_values
+    # logits = np.array(logits)  
     
     # Pre-calculate the CDF and Gumbel noise for all tokens
     as_vec = np.ones(1)*(-25.0)
