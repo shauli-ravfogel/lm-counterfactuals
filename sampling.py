@@ -45,7 +45,7 @@ def switch_gumbel_noise(noise, replaced_pairs, tokenizer):
     return noise_new
 
 
-def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token=None, noise=None, first_idx=None):
+def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token=None, noise=None, first_idx=None, fwd_hooks=None):
     device = model.model.device if isinstance(model, ReftModel) else model.device
     if first_idx is None:
         first_idx = 0
@@ -63,17 +63,19 @@ def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token
     generated_ids = input_ids
     cont = []    
 
+    all_generated_tokens = []
     for i in range(max_new_tokens):
         with torch.no_grad():
+            
             if not isinstance(model, ReftModel):
-                outputs = model(torch.tensor(generated_token).unsqueeze(0).unsqueeze(0).to(device), use_cache=True, past_key_values = past_key_values)
+                outputs = model(input_ids=torch.tensor(generated_token).unsqueeze(0).unsqueeze(0).to(device), use_cache=True, past_key_values = past_key_values,attention_mask=None)
             else:
                   _, outputs = model({"input_ids": torch.tensor(generated_token).unsqueeze(0).unsqueeze(0).to(device), "past_key_values": past_key_values}, use_cache=True)
         
         logits = outputs.logits[:, -1, :]
-        print("decoded argmax", tokenizer.decode(logits.argmax()))
+        #print("decoded argmax", tokenizer.decode(logits.argmax()))
         if (noise is not None) and ( i < len(noise)):
-                print("adding noise of shape", noise[i].shape)
+                #print("adding noise of shape", noise[i].shape)
                 logits += torch.tensor(noise[i]).to(device)
         else:
                 logits += torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size = logits.shape[-1])).to(device)
@@ -82,9 +84,10 @@ def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token
         next_token_id = torch.argmax(logits, dim=-1).unsqueeze(0)
         generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
         generated_token = next_token_id.item()
+        all_generated_tokens.append(generated_token)
         
         generated_token_str = tokenizer.decode([generated_token], skip_special_tokens=True)
-        print("Generated ", generated_token_str)
+        #print("Generated ", generated_token_str)
         cont.append(generated_token_str)
         
         if stop_token and generated_token == stop_token:
@@ -94,8 +97,8 @@ def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token
     
     # Decode the full generated sequence
     final_sentence = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-    cont = tokenizer.decode(generated_ids[0][first_idx:], skip_special_tokens=True)
-    return final_sentence, cont    
+    #cont = tokenizer.decode(generated_ids[0][first_idx:], skip_special_tokens=True)
+    return final_sentence, tokenizer.decode(all_generated_tokens)    
     
     # # Initialize variables
     # generated_ids = input_ids
@@ -379,7 +382,7 @@ def counterfactual_generation_vectorized2(model, tokenizer, prompt, sentence, vo
     len_prompt = len(tokens_prompt[0])
 
     with torch.no_grad():
-        logits_all = model(tokens, use_cache=False).logits
+        logits_all = model(tokens).logits
         logits_cont = logits_all[:,len_prompt-1:,:][0].detach().cpu().numpy()
     tokens_cont = tokens[:,len_prompt-1:]
     as_vec = np.ones(1)*(-25.0)
