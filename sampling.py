@@ -76,6 +76,7 @@ def generate_with_logits(model, tokenizer, prompt, max_new_tokens=50, stop_token
         #print("decoded argmax", tokenizer.decode(logits.argmax()))
         if (noise is not None) and ( i < len(noise)):
                 #print("adding noise of shape", noise[i].shape)
+                print("adding noise to the logits over the input token '{}'".format(tokenizer.decode([generated_token])))
                 logits += torch.tensor(noise[i]).to(device)
         else:
                 logits += torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size = logits.shape[-1])).to(device)
@@ -377,8 +378,9 @@ def sample_from_truncated_gumbel_vectorized(a, b):
 
 
 def counterfactual_generation_vectorized2(model, tokenizer, prompt, sentence, vocab_size):
-    tokens = tokenizer.encode(prompt + sentence, return_tensors="pt", add_special_tokens=False).to(model.device)
+    tokens_sentence = tokenizer.encode(sentence, return_tensors="pt", add_special_tokens=False).to(model.device)
     tokens_prompt = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
+    tokens = torch.cat((tokens_prompt, tokens_sentence), dim=1)
     len_prompt = len(tokens_prompt[0])
 
     with torch.no_grad():
@@ -391,6 +393,7 @@ def counterfactual_generation_vectorized2(model, tokenizer, prompt, sentence, vo
     all_gumbel_noise = []
     
     for i, w in enumerate(tokens_cont[0,1:]):
+        print("calculating noise for the generation of token '{}'".format(tokenizer.decode(w.detach().cpu().numpy())))
         logit_w = logits_cont[i, w]
         logit_diffs = logit_w - logits_cont[i]  # Corrected: logit_w - logit_j for all vocab
 
