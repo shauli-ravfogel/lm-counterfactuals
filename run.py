@@ -34,6 +34,7 @@ from transformer_lens import HookedTransformer, utils
 from transformer_lens.hook_points import HookPoint
 import pyvene as pv
 from transformers import pipeline
+from sampling import GumbelProcessor
 
 os.environ['HF_HOME'] = "/cluster/scratch/sravfogel/hf"
 
