@@ -201,15 +201,14 @@ class GumbelProcessor(LogitsProcessor):
         self.noises = []
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
-        #print(input_ids)
         if self.precomputed_noise is not None:
-            out = scores + self.precomputed_noise[self.i]
+            if self.i < len(self.precomputed_noise):
+                out = scores + self.precomputed_noise[self.i]
+            else:
+                gumbel = torch.tensor(np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)).to(scores.device)
+                out = scores + gumbel
             self.i += 1
             return out
-        
-        # gumbel = np.random.gumbel(loc=0.0, scale=1.0, size=scores.shape)
-        # self.noises.append(gumbel)
-        # return scores + gumbel
 
 
 
@@ -393,7 +392,7 @@ def counterfactual_generation_vectorized2(model, tokenizer, prompt, sentence, vo
     all_gumbel_noise = []
     
     for i, w in enumerate(tokens_cont[0,1:]):
-        print("calculating noise for the generation of token '{}'".format(tokenizer.decode(w.detach().cpu().numpy())))
+        #print("calculating noise for the generation of token '{}'".format(tokenizer.decode(w.detach().cpu().numpy())))
         logit_w = logits_cont[i, w]
         logit_diffs = logit_w - logits_cont[i]  # Corrected: logit_w - logit_j for all vocab
 
@@ -409,7 +408,7 @@ def counterfactual_generation_vectorized2(model, tokenizer, prompt, sentence, vo
         ind2noise[i] = (tokenizer.decode(w), gumbel_noise)
     
     all_gumbel_noise = np.array(all_gumbel_noise)
-    return all_gumbel_noise, ind2noise
+    return all_gumbel_noise, ind2noise, None
 
 
     
