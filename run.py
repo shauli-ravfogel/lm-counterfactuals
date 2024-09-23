@@ -115,7 +115,7 @@ if __name__ == '__main__':
             text = original_model.generate(tokens_prompt, logits_processor=[processor], do_sample=False, generation_config=generation_config)
             text = tokenizer.decode(text.detach().cpu().numpy()[0], skip_special_tokens=True)
             conts.append(text)
-            print("Generated countefactual: \n\t\t{} For sentence:\n\t\t{}".format(out,sentence))
+            print("Generated countefactual: \n\t\t{} For sentence:\n\t\t{}".format(text,sentence))
             #counterfactual_model.to(device2)
             #original_model.to(device1)
             
