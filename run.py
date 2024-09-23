@@ -1,6 +1,6 @@
 from datasets import load_dataset
 from transformers.generation.logits_process import LogitsProcessor,LogitsProcessorList
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 import numpy as np
 from scipy.stats import gumbel_l
 #from arsenal.maths.rvs import TruncatedDistribution
@@ -33,6 +33,7 @@ from torch import Tensor
 from transformer_lens import HookedTransformer, utils
 from transformer_lens.hook_points import HookPoint
 import pyvene as pv
+from transformers import pipeline
 
 os.environ['HF_HOME'] = "/cluster/scratch/sravfogel/hf"
 
@@ -47,12 +48,12 @@ def direction_ablation_hook(
 if __name__ == '__main__':
     ds = load_dataset("sentence-transformers/wikipedia-en-sentences")
     num_sents = 500
-    models = [ ("meta-llama/Meta-Llama-3-8B-Instruct", "jujipotle/honest_llama3_8B_instruct"),
-              ("openai-community/gpt2-xl", "jas-ho/rome-edits-louvre-rome"),
+    models = [ ("openai-community/gpt2-xl", "jas-ho/rome-edits-louvre-rome"),
+              ("meta-llama/Meta-Llama-3-8B-Instruct", "jujipotle/honest_llama3_8B_instruct"),
              ("meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-7b-chat-hf"),
             ]
     
-    add_prompt=False
+    add_prompt=True
     sents = ds["train"]["sentence"][:num_sents]
     device1,device2 = "cuda:0", "cuda:1"
 
@@ -85,23 +86,35 @@ if __name__ == '__main__':
         tokenizer = transformers.AutoTokenizer.from_pretrained(
             orig, model_max_length=512, 
             padding_side="right", use_fast=False,trust_remote_code=True)
+        if tokenizer.bos_token is None:
+            tokenizer.bos_token = tokenizer.eos_token
+            
         vocab_size = len(tokenizer.get_vocab())
 
-        prompt = tokenizer.bos_token + "Continue this sentence:"
+        prompt = tokenizer.bos_token
         if add_prompt:
-            prompt = tokenizer.bos_token + "Continue this sentence that starts with the words{}:"
+            prompt = tokenizer.bos_token + "{}"
         conts = []
+
+        generation_config = GenerationConfig(
+                    max_new_tokens=30,
+                    token_healing=True,
+                    do_sample=False,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
         
         for sentence in tqdm.tqdm(sents):
             original_continuation = sentence
             full_prompt = prompt if not add_prompt else prompt.format(" ".join(sentence.split(" ")[:5]))
-            noise, ind2noise = counterfactual_generation_vectorized2(original_model, tokenizer, full_prompt,original_continuation, vocab_size)
-            #original_model.to(device2)
-            #counterfactual_model.to(device1)
-            out, cont = generate_with_logits(counterfactual_model, tokenizer, full_prompt, max_new_tokens=30, noise=noise,
-                                                        first_idx = None,fwd_hooks=fwd_hooks)
-            conts.append(cont)
-            print("Generated countefactual: \n\t\t{} For sentence:\n\t\t{}".format(cont,sentence))
+            noise, ind2noise,logits = counterfactual_generation_vectorized2(original_model, tokenizer, full_prompt,original_continuation, vocab_size)
+            #out, cont = generate_with_logits(counterfactual_model, tokenizer, full_prompt, max_new_tokens=30, noise=noise,
+            #                                            first_idx = None,fwd_hooks=fwd_hooks)
+            processor = GumbelProcessor(torch.tensor(noise).to(original_model.device))
+            tokens_prompt = tokenizer.encode(full_prompt, return_tensors="pt", add_special_tokens=False).to(original_model.device)
+            text = original_model.generate(tokens_prompt, logits_processor=[processor], do_sample=False, generation_config=generation_config)
+            text = tokenizer.decode(text.detach().cpu().numpy()[0], skip_special_tokens=True)
+            conts.append(text)
+            print("Generated countefactual: \n\t\t{} For sentence:\n\t\t{}".format(out,sentence))
             #counterfactual_model.to(device2)
             #original_model.to(device1)
             
