@@ -49,8 +49,8 @@ def direction_ablation_hook(
 if __name__ == '__main__':
     ds = load_dataset("sentence-transformers/wikipedia-en-sentences")
     num_sents = 500
-    models = [ ("openai-community/gpt2-xl", "jas-ho/rome-edits-louvre-rome"),
-              ("meta-llama/Meta-Llama-3-8B-Instruct", "jujipotle/honest_llama3_8B_instruct"),
+    models = [  ("meta-llama/Meta-Llama-3-8B-Instruct", "jujipotle/honest_llama3_8B_instruct"),
+              ("openai-community/gpt2-xl", "jas-ho/rome-edits-louvre-rome"),
              ("meta-llama/Llama-2-7b-hf", "meta-llama/Llama-2-7b-chat-hf"),
             ]
     
@@ -98,26 +98,37 @@ if __name__ == '__main__':
         conts = []
 
         generation_config = GenerationConfig(
-                    max_new_tokens=30,
-                    token_healing=True,
-                    do_sample=False,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
-        
+            token_healing=True,
+            pad_token_id=tokenizer.eos_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+            bos_token_id = tokenizer.bos_token_id,
+            do_sample=False,
+            num_beams=1,
+            max_new_tokens=30
+        )
+
+        all_sents = []
         for sentence in tqdm.tqdm(sents):
-            original_continuation = sentence
+            original_continuation = " ".join(sentence.split(" ")[5:])
             full_prompt = prompt if not add_prompt else prompt.format(" ".join(sentence.split(" ")[:5]))
+            tokens_prompt = tokenizer.encode(full_prompt, return_tensors="pt", add_special_tokens=False).to(counterfactual_model.device)
+            text_generated_orig = original_model.generate(tokens_prompt, do_sample=True, max_new_tokens=20)
+
+            text_generated_orig = text_generated_orig[:,tokens_prompt.shape[1]:]
+            text_generated_orig = tokenizer.decode(text_generated_orig.detach().cpu().numpy()[0], skip_special_tokens=True)
+            original_continuation = text_generated_orig
+            
             noise, ind2noise,logits = counterfactual_generation_vectorized2(original_model, tokenizer, full_prompt,original_continuation, vocab_size)
             #out, cont = generate_with_logits(counterfactual_model, tokenizer, full_prompt, max_new_tokens=30, noise=noise,
             #                                            first_idx = None,fwd_hooks=fwd_hooks)
             processor = GumbelProcessor(torch.tensor(noise).to(original_model.device))
-            tokens_prompt = tokenizer.encode(full_prompt, return_tensors="pt", add_special_tokens=False).to(original_model.device)
-            text = original_model.generate(tokens_prompt, logits_processor=[processor], do_sample=False, generation_config=generation_config)
+            text = counterfactual_model.generate(tokens_prompt, logits_processor=[processor], generation_config=generation_config)
             text = tokenizer.decode(text.detach().cpu().numpy()[0], skip_special_tokens=True)
             conts.append(text)
-            print("Generated countefactual: \n\t\t{} For sentence:\n\t\t{}".format(text,sentence))
+            print("Generated countefactual: \n\t\t{} For sentence:\n\t\t{}".format(text,full_prompt + "" + original_continuation))
+            all_sents.append(full_prompt.replace(tokenizer.bos_token,"")+original_continuation)
             #counterfactual_model.to(device2)
             #original_model.to(device1)
             
             with open(f"{orig.split("/")[1]}_{counter.split("/")[1]}_prompt:{add_prompt}.pkl", "wb") as f:
-                pickle.dump({"original": sents, "counter": conts}, f)
+                pickle.dump({"original": all_sents, "counter": conts}, f)
