@@ -7,6 +7,6 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-Then, run ```run.py``` to re-generate the counterfactuals on the Wikipedia/Bios dataset. The notebook ```example.ipynb``` contains a minimal example for generating a counterfactual string based on an original string.
+Then, run ```run.py``` to re-generate the counterfactuals on the Wikipedia/Bios dataset. The notebook [example.ipynb](https://github.com/shauli-ravfogel/lm-counterfactuals/blob/main/example.ipynb) contains a minimal example for generating a counterfactual string based on an original string.
 
 The directory ```counterfactuals``` contains the counterfactuals sentences we generated from Wikipedia and the Biosd dataset, based on several models and intervention techniques.
