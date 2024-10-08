@@ -18,12 +18,12 @@ if __name__ == "__main__":
     parser.add_argument("--prompt_first_k", type=int, default=5,required=False)
     parser.add_argument("--max_new_tokens", type=int, default=25,required=False)
     parser.add_argument("--models", type=list, default=[
-         #("openai-community/gpt2-xl", "mimic_gender_gpt2_instruct"),
-         #("meta-llama/Meta-Llama-3-8B-Instruct", "mimic_gender_llama3_instruct"),
-         #("meta-llama/Meta-Llama-3-8B-Instruct", "honest_steering_llama3_instruct"),
-         #("meta-llama/Meta-Llama-3-8B", "chat_llama3"),
-         #("openai-community/gpt2-xl", "rome_louvre_gpt2_xl"),
-         #("openai-community/gpt2-xl", "GPT2-memit-louvre-rome"),
+         ("openai-community/gpt2-xl", "mimic_gender_gpt2_instruct"),
+         ("meta-llama/Meta-Llama-3-8B-Instruct", "mimic_gender_llama3_instruct"),
+         ("meta-llama/Meta-Llama-3-8B-Instruct", "honest_steering_llama3_instruct"),
+         ("meta-llama/Meta-Llama-3-8B", "chat_llama3"),
+         ("openai-community/gpt2-xl", "rome_louvre_gpt2_xl"),
+         ("openai-community/gpt2-xl", "GPT2-memit-louvre-rome"),
          ("openai-community/gpt2-xl", "GPT2-memit-koalas-new_zealand")
             ], required=False)
     args = parser.parse_args()    
