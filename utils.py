@@ -106,16 +106,13 @@ def get_counterfactual_model(intervention_type: str):
     if intervention_type == "honest_steering_llama3_instruct":
         model_name = "jujipotle/honest_llama3_8B_instruct"
     elif intervention_type == "rome_louvre_gpt2_xl":
-        #model_name = "jas-ho/rome-edits-louvre-rome"
-        model_name = "/cluster/scratch/sravfogel/cache/hf/hub/models--jas-ho--rome-edits-louvre-rome/snapshots/4641a7fa76e9ed62564bedf1e7bf04af3051b357"
+        model_name = "jas-ho/rome-edits-louvre-rome"
     elif intervention_type == "chat_llama2":
         model_name = "meta-llama/Llama-2-7b-chat-hf"
     elif intervention_type == "chat_llama3":
-        #model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
-        model_name = "/cluster/scratch/sravfogel/cache/hf/hub/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/e1945c40cd546c78e41f1151f4db032b271faeaa"
+        model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
     elif intervention_type == "mimic_gender_llama3_instruct":
-        #model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
-        model_name = "/cluster/scratch/sravfogel/cache/hf/hub/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/e1945c40cd546c78e41f1151f4db032b271faeaa"
+        model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
     elif intervention_type == "mimic_gender_gpt2_instruct":
         model_name = "openai-community/gpt2-xl"
     elif intervention_type == "GPT2-memit-louvre-rome":
