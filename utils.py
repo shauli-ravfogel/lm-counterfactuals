@@ -116,9 +116,9 @@ def get_counterfactual_model(intervention_type: str):
     elif intervention_type == "mimic_gender_gpt2_instruct":
         model_name = "openai-community/gpt2-xl"
     elif intervention_type == "GPT2-memit-louvre-rome":
-        model_name = "/cluster/scratch/sravfogel/cache/hf/hub/GPT2-memit-louvre-rome"
+        model_name = "interim/GPT2-memit-louvre-rome"
     elif intervention_type == "GPT2-memit-koalas-new_zealand":
-        model_name = "/cluster/scratch/sravfogel/cache/hf/hub/GPT2-memit-koalas-new_zealand"
+        model_name = "interim/GPT2-memit-koalas-new_zealand"
     
     model = load_model(model_name)
     if intervention_type in REQUIRE_LOADING:
