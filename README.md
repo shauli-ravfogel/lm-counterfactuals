@@ -6,6 +6,7 @@ To set up the environment:
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+gdown --folder https://drive.google.com/drive/folders/11PE8DxVqbfpsLhqLop71CqL6KsdeTnFf
 ```
 Then, run ```run.py``` to re-generate the counterfactuals on the Wikipedia/Bios dataset. The notebook [example.ipynb](https://github.com/shauli-ravfogel/lm-counterfactuals/blob/main/example.ipynb) contains a minimal example for generating a counterfactual string based on an original string.
 
