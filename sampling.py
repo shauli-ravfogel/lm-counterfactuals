@@ -4,6 +4,7 @@ import scipy
 from scipy.stats import gumbel_l, gumbel_r
 from transformers.generation import LogitsProcessor,LogitsProcessorList
 import torch
+from scipy.special import softmax, logsumexp
 
 class GumbelProcessor(LogitsProcessor):
     def __init__(self, precomputed_noise=None,noise=1, replaced_pairs=None):
@@ -46,7 +47,58 @@ def sample_from_truncated_gumbel_vectorized(a, b):
     return gumbel_l.ppf(cdf_u)
 
 
+def truncated_gumbel_vectorized(alpha, truncation):
+    """
+    Vectorized version of truncated Gumbel sampling.
+    """
+    gumbel = np.random.gumbel(size=len(alpha)) + np.log(alpha)
+    return -np.log(np.exp(-gumbel) + np.exp(-truncation))
+
+def topdown_vectorized(alphas, k):
+    """
+    Vectorized version of topdown function.
+    """
+    topgumbel = np.random.gumbel() + np.log(np.sum(alphas))
+    # Create a mask for the k-th index
+    mask = np.arange(len(alphas)) == k
+    gumbels = np.where(
+        mask,  # If mask is True
+        topgumbel,  # Assign topgumbel
+        truncated_gumbel_vectorized(alphas, topgumbel)  # Else truncated_gumbel
+    )
+    # we calculate the gumbels with location [logit1, logits2, ..., logitn]. We need to re-center them.
+    gumbels -= np.log(alphas) 
+    return gumbels
+
+
 def counterfactual_generation_vectorized(model, tokenizer, prompt, sentence):
+    vocab_size = len(tokenizer.get_vocab())
+    tokens_sentence = tokenizer.encode(sentence, return_tensors="pt", add_special_tokens=False).to(model.device)
+    tokens_prompt = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
+    tokens = torch.cat((tokens_prompt, tokens_sentence), dim=1)
+    len_prompt = len(tokens_prompt[0])
+
+    with torch.no_grad():
+        logits_all = model(tokens).logits
+        logits_cont = logits_all[:,len_prompt-1:,:][0].detach().cpu().numpy()
+    tokens_cont = tokens[:,len_prompt-1:]
+    as_vec = np.ones(1)*(-25.0)
+    uniform_samples = np.random.uniform(0, 1, size=(len(tokens[0]) - 1, vocab_size))
+    ind2noise = {}
+    all_gumbel_noise = []
+    
+    for i, w in enumerate(tokens_cont[0,1:]):
+        w_int = w.detach().cpu().numpy().item()
+        exp_logits = np.exp(logits_cont[i])
+        gumbel_noise = topdown_vectorized(exp_logits, w_int)
+        all_gumbel_noise.append(gumbel_noise)
+        ind2noise[i] = (tokenizer.decode(w), gumbel_noise)
+    
+    all_gumbel_noise = np.array(all_gumbel_noise)
+    return all_gumbel_noise
+
+    
+def counterfactual_generation_vectorized_old(model, tokenizer, prompt, sentence):
     vocab_size = len(tokenizer.get_vocab())
     tokens_sentence = tokenizer.encode(sentence, return_tensors="pt", add_special_tokens=False).to(model.device)
     tokens_prompt = tokenizer.encode(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
@@ -67,7 +119,7 @@ def counterfactual_generation_vectorized(model, tokenizer, prompt, sentence):
         logit_diffs = logit_w - logits_cont[i]  
 
         # Generate gumbel noise for the current word
-        value = np.random.gumbel(loc=0.0, scale=1.0)
+        value = np.random.gumbel(loc=logsumexp(logits_cont[i]), scale=1.0)
 
         # Calculate the sample from truncated gumbel for all vocabulary items
         gumbel_noise = sample_from_truncated_gumbel_vectorized(as_vec, value + logit_diffs)
