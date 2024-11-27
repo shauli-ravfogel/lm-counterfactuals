@@ -14,7 +14,7 @@ REQUIRE_LOADING = ["mimic_gender_llama3_instruct", "mimic_gender_gpt2_instruct"]
 
 def load_bios_data(ys_to_keep = ["professor"], zs_to_keep = [1,0]):
 
-    with open("../bios_data/bios_train.pickle", "rb") as f:
+    with open("interim/bios_data/bios_train.pickle", "rb") as f:
         data = pickle.load(f)
         y = np.array([d["p"] for d in data])
         z = np.array([1 if d["g"] == "m" else 0 for d in data])
