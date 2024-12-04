@@ -8,47 +8,36 @@ class InterventionModule(nn.Module):
         self.mean_0 = torch.tensor(mean_0.astype("float32"))
         self.mean_1 = torch.tensor(mean_1.astype("float32"))
         self.A = torch.tensor(A.astype("float32"))
-        self.mlp = sk2torch.wrap(mlp)
+        #self.mlp = sk2torch.wrap(mlp)
         self.alpha = alpha
         # set requires_grad=False to all params of the mlp
-        for p in self.mlp.parameters():
-            p.requires_grad = False
+        #for p in self.mlp.parameters():
+        #    p.requires_grad = False
     
     def to_cuda(self, device):
       self.A = self.A.to(device)
       self.mean_0 = self.mean_0.to(device)
       self.mean_1 = self.mean_1.to(device)
-      self.mlp = self.mlp.to(device)
+      #self.mlp = self.mlp.to(device)
 
     def to_cpu(self):
       self.A = self.A.to("cpu")
       self.mean_0 = self.mean_0.to("cpu")
       self.mean_1 = self.mean_1.to("cpu")
-      self.mlp = self.mlp.to("cpu")
+      #self.mlp = self.mlp.to("cpu")
 
     def forward(self, hidden_states):
         self.to_cuda(hidden_states.device)
-        # fi hidden state is half, convert laso the params to half precision
+        # if hidden state is half, convert laso the params to half precision
         if hidden_states.dtype == torch.float16:
           self.A = self.A.half()
           self.mean_0 = self.mean_0.half()
           self.mean_1 = self.mean_1.half()
-          self.mlp = self.mlp.half()
-
-        
-        preds = self.mlp(hidden_states)
-        if len(preds.shape) == 2:
-            preds = preds[0]
-
 
         x = hidden_states.clone().reshape(-1, hidden_states.shape[-1])
-        
         if self.alpha != 0:
-            #print((preds == 0).sum())
-            #x[preds == 0] = self.alpha*self.mean_1 + (x[preds == 0] - self.alpha*self.mean_0)@self.A
             x = self.alpha*self.mean_1 + (x - self.alpha*self.mean_0)@self.A
-
-        #print("Steering {} samples".format((preds == 0).sum()))
+            #x = self.A * x + self.mean_1 - self.A * self.mean_0
         x = x.reshape(hidden_states.shape)
         return x
 
