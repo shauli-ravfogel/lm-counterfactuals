@@ -9,14 +9,15 @@ import pickle
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="")   #parser is an object of the class Argument Parser.
-    parser.add_argument("--dataset_name", type=str, default="sentence-transformers/wikipedia-en-sentences", required=False)
-    #parser.add_argument("--dataset_name", type=str, default="bios", required=False)
+    #parser.add_argument("--dataset_name", type=str, default="sentence-transformers/wikipedia-en-sentences", required=False)
+    parser.add_argument("--dataset_name", type=str, default="bios", required=False)
     parser.add_argument("--bios_zs_to_keep", type=list, default=[1], required=False)
     parser.add_argument("--bios_ys_to_keep", type=list, default=["professor"], required=False)
     parser.add_argument("--num_sents", type=int, default=500,required=False)
     parser.add_argument("--prompt", type=str, default="first_k",required=False)
-    parser.add_argument("--prompt_first_k", type=int, default=5,required=False)
-    parser.add_argument("--max_new_tokens", type=int, default=25,required=False)
+    parser.add_argument("--prompt_first_k", type=int, default=7,required=False)
+    parser.add_argument("--max_new_tokens", type=int, default=40,required=False)
+    parser.add_argument("--num_counterfactuals", type=int, default=1,required=False)
     parser.add_argument("--models", type=list, default=[
          ("openai-community/gpt2-xl", "mimic_gender_gpt2_instruct"),
          ("meta-llama/Meta-Llama-3-8B-Instruct", "mimic_gender_llama3_instruct"),
@@ -55,10 +56,12 @@ if __name__ == "__main__":
                 prompt = tokenzier.bos_token
 
             # get counterfactual
-            
+            counterfactuals = []
             original_continuation_tokens, original_continuation = utils.get_continuation(original_model, tokenizer, prompt, max_new_tokens=args.max_new_tokens, return_only_continuation=True,num_beams=1, do_sample=True, token_healing=True)
-            count_tokens, count_text = utils.get_counterfactual_output(counterfactual_model, original_model, tokenizer, prompt, original_continuation, args.max_new_tokens)
-            all_outputs.append({"tokens": count_tokens, "text": count_text})
+            for l in range(args.num_counterfactuals):
+                count_tokens, count_text = utils.get_counterfactual_output(counterfactual_model, original_model, tokenizer, prompt, original_continuation, args.max_new_tokens)
+                counterfactuals.append({"tokens": count_tokens, "text": count_text})
+            all_outputs.append(counterfactuals)
             orig_str = prompt.replace(tokenizer.bos_token,"")+original_continuation
             orig_str_tokens = tokenizer.encode(orig_str, return_tensors="pt", add_special_tokens=False).detach().cpu().numpy()[0]
             all_sents.append({"tokens": orig_str_tokens, "text": orig_str})
@@ -66,6 +69,6 @@ if __name__ == "__main__":
             print("Original: {}\n--------------------\nCounterfactual: {}".format(orig_str, count_text))
             print("==================================")
             dataset_name = "wiki" if "wiki" in args.dataset_name else "bios"
-            fname = f"counterfactuals2/{dataset_name}_{orig.split("/")[1]}->{intervention_type}_prompt:{args.prompt}_sents:{args.num_sents}_prompt_first_k:{args.prompt_first_k}_max_new_tokens:{args.max_new_tokens}.pkl"
+            fname = f"counterfactuals/{dataset_name}_{orig.split("/")[1]}->{intervention_type}_prompt:{args.prompt}_sents:{args.num_sents}_prompt_first_k:{args.prompt_first_k}_max_new_tokens:{args.max_new_tokens}.pkl"
             with open(fname, "wb") as f:
                 pickle.dump({"original": all_sents, "counter": all_outputs}, f)
